@@ -1,3 +1,4 @@
+import struct
 from functools import wraps
 
 from socket import socket as Socket
@@ -64,6 +65,9 @@ def conn(sock: Socket):
 			continue
 
 		if data == b"\xAF":
+			data = sock.recv(4)
+			x = struct.unpack('f', data)[0]
+			print(x);
 			try:
 				sock.send(b"\xFA" + bytes([value]))
 			except:
