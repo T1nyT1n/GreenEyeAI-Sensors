@@ -83,7 +83,10 @@ void getMode() {
   // отправка "волшебного" байта
   client.write(0xAF);
   client.flush();
-  // чтение возвращёного значения
+  // чтение "волшебного" байта
+  u8 byte = client.read();
+  if (byte != 0xFA) return;
+  // чтение заданного режима
   mode = client.read();
 }
 

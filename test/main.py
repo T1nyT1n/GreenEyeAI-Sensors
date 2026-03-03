@@ -1,9 +1,22 @@
+from functools import wraps
+
 from socket import socket as Socket
 from socket import AF_INET, SOCK_STREAM, timeout
+
 from threading import Thread
-from time import sleep
 
 
+# декоратор для автоматизации написания потоковых функций
+def threaded(func):
+	@wraps(func)
+	def decor(*args, **kwargs) -> Thread:
+		thread = Thread(target=func, args=args, kwargs=kwargs, daemon=True)
+		thread.start()
+		return thread
+	return decor
+
+
+# функция для ввода значений
 def inputValue():
 	global value, running
 	while running:
@@ -23,28 +36,42 @@ def inputValue():
 		value = val
 
 
+@threaded
 def main():
+	global running
 	server = Socket(AF_INET, SOCK_STREAM)
-	# добавить проверку на bind
-	server.bind(("0.0.0.0", 13000))
+	try:
+		server.bind(("0.0.0.0", 13000))
+	except:
+		print("Не верный адрес или порт уже занят")
+		running = False
+		return
 	server.listen()
 
 	while running:
-		# добавить защиту accept
 		sock, _ = server.accept()
-		Thread(target=conn, args=(sock,), daemon=True).start()
+		conn(sock) # threaded
 
 
+@threaded
 def conn(sock: Socket):
-	# добавить защиту, recv|send
-	while True:
-		data = sock.recv(1)
+	running = True
+	while running:
+		try:
+			data = sock.recv(1)
+		except:
+			running = False
+			continue
+
 		if data == b"\xAF":
-			sock.send(bytes([value]))
-		
+			try:
+				sock.send(b"\xFA" + bytes([value]))
+			except:
+				running = False
+
 
 if __name__ == "__main__":
 	value = 0;
 	running = True;
-	Thread(target=main, daemon=True).start()
+	main() # threaded
 	inputValue()
