@@ -1,139 +1,256 @@
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
-#include <cstdlib>  // для rand(), srand()
-#include <ctime>    // для time()
 
-// флаг для вывода
-#define DEBUG
 #define START_SENSOR 0
+#define SENSORS 3
 
-typedef unsigned char u8;
-typedef   signed char i8;
-
-typedef unsigned short u16;
-typedef   signed short i16;
-
-typedef unsigned int u32;
-typedef   signed int i32;
-
-// typedef unsigned long u64;
-// typedef   signed long i64;
-
-
-const char* ssid = "VNE-N41";
-const char* password = "34670000";
-
-
-WiFiClient client;
-const char *host = "10.21.36.131";
-const u16 port = 5000;
-
-
-typedef struct Sensor {
-  float value;
-  u64 last_time;
-  u64 delay;
-  float base_min; float base_max;
-  float shift_min; float shift_max;
+struct Sensor {
+	float value;
+	u64 last_time;
+	u64 delay;
+	float base_min; float base_max;
+	float shift_min; float shift_max;
 };
 
 Sensor s[] = {
-  { 0.0, 0,  100, -1000.0, 1000.0,  -10.0,  10.0 }, // pH sensor
-  { 0.0, 0, 1000,     0.0, 1024.0, -200.0, 200.0 }, // light sensor
-  { 0.0, 0,  100,   -30.0,   50.0,   -1.0,   1.0 }, // T sensor
+	{ 0.0, 0, 5000, -1000.0, 1000.0,  -10.0,  10.0 }, // pH sensor
+	{ 0.0, 0, 1000,     0.0, 1024.0, -200.0, 200.0 }, // light sensor
+	{ 0.0, 0, 1000,   -30.0,   50.0,   -1.0,   1.0 }, // T sensor
 };
 
-auto size = sizeof(s) / sizeof(Sensor);
+String ssid     = "VNE-N41";
+String password = "34670000";
+String host     = "10.21.36.131";
+u16 port        = 5000;
 
+WiFiClient client;
 
-void connectToWifi() {
-  Serial.print("Подключение к Wi-Fi: ");
-  digitalWrite(D0, LOW);
-  digitalWrite(D1, LOW);
-  WiFi.begin(ssid, password);
-  while (!WiFi.isConnected()) {
-    auto status = WiFi.status();
-    if (status == WL_NO_SSID_AVAIL) {
-      Serial.println(" Ошибка\nДанный SSID не доступен");
-      return;
-    }
-    if (status == WL_WRONG_PASSWORD) {
-      Serial.println(" Ошибка\nПароль не верный");
-      return;
-    }
-    Serial.print(".");
-    delay(500);
-  }
-  Serial.println(" Готово");
-  digitalWrite(D0, HIGH);
-}
+String my_ssid;
+const String my_password = "34670000";
+const u8 config_magic[4] = {0xDE, 0xAD, 0xBE, 0xEF};
 
+#define BUTTON_PIN D0
+#define CONFIG_TIMEOUT_MS 60000
 
-void connectToServer() {
-  Serial.print("Подключение к серверу: ");
-  digitalWrite(D1, LOW);
-  while (!client.connected()) {
-    // проверяем, действительно ли соединение
-    // и выходим если оборвалось во премя
-    // подключения к серверу
-    if (!WiFi.isConnected()) {
-      Serial.println(" Ошибка\nWiFi не подключен");
-      return;
-    }
-    client.connect(host, port);
-    Serial.print(".");
-    delay(500); 
-  }
-  Serial.println(" Готово");
-  digitalWrite(D1, HIGH);
-}
+u64 lastPressTime = 0;
+bool lastButtonState = false;
+bool doubleClickDetected = false;
 
+WiFiServer configServer(7931);
 
 float getRandom(float min, float max) {
-  float x = rand() / (float) RAND_MAX;
-  return min + (max - min) * x;
+	float x = rand() / (float) RAND_MAX;
+	return min + (max - min) * x;
 }
 
+u64 lastWifiConnectAttempt = 0;
+void connectToWifi() {
+	if (millis() - lastWifiConnectAttempt < 70000 && 
+		lastWifiConnectAttempt != 0) return;
+	lastWifiConnectAttempt = millis();
+	Serial.print("Подключение к Wi-Fi: ");
+	WiFi.begin(ssid, password);
+	while (!WiFi.isConnected()) {
+		auto status = WiFi.status();
+		if (status == WL_NO_SSID_AVAIL) {
+			Serial.println(" Ошибка\nДанный SSID не доступен\n");
+			return;
+		}
+		if (status == WL_WRONG_PASSWORD) {
+			Serial.println(" Ошибка\nПароль не верный\n");
+			return;
+		}
+		if (millis() - lastWifiConnectAttempt > 10000) {
+			Serial.println(" Таймаут\n");
+			return;
+		}
+		Serial.print(".");
+		delay(500);
+	}
+	Serial.println(" Готово\n");
+}
+
+u64 lastServerConnectAttempt = 0;
+void connectToServer() {
+	if (millis() - lastServerConnectAttempt < 35000 &&
+		lastServerConnectAttempt != 0) return;
+	lastServerConnectAttempt = millis();
+	Serial.print("Подключение к серверу: ");
+	while (!client.connected()) {
+		if (!WiFi.isConnected()) {
+			Serial.println(" Ошибка\nWiFi не подключен\n");
+			return;
+		}
+		if (millis() - lastServerConnectAttempt > 5000) {
+			Serial.println(" Таймаут\n");
+			return;
+		}
+		client.connect(host, port);
+		Serial.print(".");
+		delay(500);
+	}
+	Serial.println(" Готово\n");
+}
 
 void sendSensorData(int sensor_id, float data) {
-  String body = "{\"sensor_id\":" + String(sensor_id) +
-                ",\"data\":" + String(data) + "}";
+	String body = "{\"sensor_id\":" + String(sensor_id + START_SENSOR) +
+								",\"data\":" + String(data) + "}";
+	int contentLength = body.length();
+	String req = "POST /data HTTP/1.1\r\n";
+	req += "Host: " + host + "\r\n";
+	req += "Content-Type: application/json\r\n";
+	req += "Content-Length: " + String(contentLength) + "\r\n";
+	req += "\r\n";
+	req += body;
+	client.print(req);
 
-  int contentLength = body.length();
-
-  String req = "POST /data HTTP/1.1\r\n";
-  req += "Host: " + String(host) + "\r\n";
-  req += "Content-Type: application/json\r\n";
-  req += "Content-Length: " + String(contentLength) + "\r\n";
-  req += "\r\n";
-  req += body;
-
-  client.print(req);
+	Serial.print("Отправлен ");
+	Serial.print(sensor_id);
+	Serial.print(" со значением: ");
+	Serial.println(data);
 }
 
+void generateMySSID() {
+	u32 r = rand() % 10000;
+	my_ssid = "ESP_" + String(r);
+}
+
+void enterConfigMode() {
+	Serial.println("\n=== РЕЖИМ КОНФИГУРАЦИИ (1 минута) ===");
+	Serial.print("Точка доступа: ");
+	Serial.print(my_ssid);
+	Serial.print(" / ");
+	Serial.println(my_password);
+	Serial.println("Подключитесь и отправьте конфигурационный пакет на порт " + String(7931));
+
+	configServer.begin();
+	u32 startTime = millis();
+	bool configured = false;
+
+	while (millis() - startTime < CONFIG_TIMEOUT_MS && !configured) {
+		WiFiClient configClient = configServer.accept();
+		if (configClient) {
+			configClient.setTimeout(2000);
+
+			u8 magic[4];
+			if (configClient.readBytes(magic, 4) != 4) {
+				configClient.stop(); continue; }
+			if (memcmp(magic, config_magic, 4) != 0) {
+				configClient.stop(); continue; }
+
+			u8 ssid_len;
+			if (configClient.readBytes(&ssid_len, 1) != 1) {
+				configClient.stop(); continue; }
+			if (ssid_len > 32) {
+				configClient.stop(); continue; }
+				
+			u8 ssid_buf[ssid_len+1];
+			if (configClient.readBytes(ssid_buf, ssid_len) != ssid_len) {
+				configClient.stop(); continue; }
+			ssid_buf[ssid_len] = 0;
+
+			u8 pass_len;
+			if (configClient.readBytes(&pass_len, 1) != 1) {
+				configClient.stop(); continue; }
+			if (pass_len > 64) {
+				configClient.stop(); continue; }
+
+			u8 pass_buf[pass_len+1];
+			if (configClient.readBytes(pass_buf, pass_len) != pass_len) {
+				configClient.stop(); continue; }
+			pass_buf[pass_len] = 0;
+
+			u8 host_len;
+			if (configClient.readBytes(&host_len, 1) != 1) {
+				configClient.stop(); continue; }
+			if (host_len > 64) {
+				configClient.stop(); continue; }
+
+			u8 host_buf[host_len+1];
+			if (configClient.readBytes(host_buf, host_len) != host_len) {
+				configClient.stop(); continue; }
+			host_buf[host_len] = 0;
+
+			u8 port_bytes[2];
+			if (configClient.readBytes(port_bytes, 2) != 2) {
+				configClient.stop(); continue; }
+
+			ssid = (char*)ssid_buf;
+			password = (char*)pass_buf;
+			host = (char*)host_buf;
+			port = (port_bytes[0] << 8) | port_bytes[1];
+
+			Serial.println("Новые параметры получены:");
+			Serial.println("SSID: " + ssid);
+			Serial.println("PASSWORD: " + password);
+			Serial.println("HOST: " + host);
+			Serial.println("PORT: " + String(port));
+
+			configClient.stop();
+			configured = true;
+		}
+		delay(10);
+	}
+	configServer.stop();
+	if (!configured) {
+		Serial.println("Таймаут конфигурации, продолжаем работу со старыми параметрами");
+	} else {
+		Serial.println("Переподключение к новой сети...");
+		WiFi.disconnect();
+		delay(1000);
+		connectToWifi();
+		if (WiFi.isConnected()) {
+			connectToServer();
+		}
+	}
+	Serial.println("=== ВЫХОД ИЗ РЕЖИМА КОНФИГУРАЦИИ ===\n");
+}
+
+void checkDoubleClick() {
+	bool currentButtonState = digitalRead(BUTTON_PIN);
+	if (currentButtonState && !lastButtonState) {
+		auto x = millis() - lastPressTime;
+		if (x > 100 && x < 500) {
+			doubleClickDetected = true;
+			lastPressTime = 0;
+		} else {
+			lastPressTime = millis();
+		}
+	}
+	lastButtonState = currentButtonState;
+}
 
 void setup() {
-  srand(time(nullptr));
-  Serial.begin(115200);
-  Serial.println();
-  Serial.println();
-  pinMode(D0, OUTPUT);
-  pinMode(D1, OUTPUT);
-
-  for (u32 i = 0; i < size; i++)
-    s[i].value = getRandom(s[i].base_min, s[i].base_max);
+	srand(micros());
+	Serial.begin(115200);
+	Serial.println();
+	pinMode(D0, INPUT);
+	generateMySSID();
+	WiFi.mode(WIFI_AP_STA);
+	WiFi.softAP(my_ssid, my_password);
+	Serial.print("IP точки доступа: ");
+	Serial.println(WiFi.softAPIP());
+	for (u32 i = 0; i < SENSORS; i++) {
+		s[i].value = getRandom(s[i].base_min, s[i].base_max);
+	}
 }
 
-
 void loop() {
-  if (!WiFi.isConnected()) connectToWifi();
-  if (!client.connected()) connectToServer();
+	checkDoubleClick();
+	if (doubleClickDetected) {
+		doubleClickDetected = false;
+		enterConfigMode();
+	}
 
-  // проходим по каждому виртуальному сенсору
-  for (u32 i = 0; i < size; i++) {
-    auto sensor = s[i];
-    if (millis() - sensor.last_time < sensor.delay) continue;
-    sensor.value += getRandom(sensor.shift_min, sensor.shift_max);
-    sendSensorData(i, sensor.value);
-  }
+	if (!WiFi.isConnected()) {
+		connectToWifi(); return; }
+	if (!client.connected()) {
+		connectToServer(); return; }
+
+	for (u32 i = 0; i < SENSORS; i++) {
+		if (millis() - s[i].last_time < s[i].delay) continue;
+		s[i].value += getRandom(s[i].shift_min, s[i].shift_max);
+		sendSensorData(i, s[i].value);
+		s[i].last_time = millis();
+	}
 }
