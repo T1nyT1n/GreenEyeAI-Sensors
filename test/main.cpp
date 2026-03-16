@@ -100,9 +100,12 @@ void sendSensorData(int sensor_id, float data) {
 	req += "Host: " + host + "\r\n";
 	req += "Content-Type: application/json\r\n";
 	req += "Content-Length: " + String(contentLength) + "\r\n";
+	req += "Connection: keep-alive\r\n";
 	req += "\r\n";
 	req += body;
+
 	client.print(req);
+	while (client.available()) client.read();
 
 	Serial.print("Отправлен ");
 	Serial.print(sensor_id);
