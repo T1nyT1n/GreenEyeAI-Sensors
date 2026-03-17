@@ -3,6 +3,29 @@
 
 #define START_SENSOR 0
 #define SENSORS 3
+#define BUTTON_PIN D0
+#define CONFIG_TIMEOUT_MS 60000
+#define WIFI_TIMEOUT_MS 10000
+#define WIFI_RECONNECT_MS 60000
+#define SERVER_TIMEOUT_MS 5000
+#define SERVER_RECONNECT_MS 30000
+
+
+String ssid     = "VNE-N41";
+String password = "34670000";
+String host     = "10.21.36.131";
+u16 port        = 5000;
+
+WiFiClient client;
+WiFiServer configServer(7931);
+
+u64 lastPressTime = 0;
+bool lastButtonState = false;
+bool doubleClickDetected = false;
+
+const String my_ssid = "ESP_CONIG";
+const String my_password = "34670000";
+const u8 config_magic[4] = {0xDE, 0xAD, 0xBE, 0xEF};
 
 struct Sensor {
 	float value;
@@ -18,25 +41,6 @@ Sensor s[] = {
 	{ 0.0, 0, 1000,   -30.0,   50.0,   -1.0,   1.0 }, // T sensor
 };
 
-String ssid     = "VNE-N41";
-String password = "34670000";
-String host     = "10.21.36.131";
-u16 port        = 5000;
-
-WiFiClient client;
-
-String my_ssid;
-const String my_password = "34670000";
-const u8 config_magic[4] = {0xDE, 0xAD, 0xBE, 0xEF};
-
-#define BUTTON_PIN D0
-#define CONFIG_TIMEOUT_MS 60000
-
-u64 lastPressTime = 0;
-bool lastButtonState = false;
-bool doubleClickDetected = false;
-
-WiFiServer configServer(7931);
 
 float getRandom(float min, float max) {
 	float x = rand() / (float) RAND_MAX;
@@ -45,8 +49,9 @@ float getRandom(float min, float max) {
 
 u64 lastWifiConnectAttempt = 0;
 void connectToWifi() {
-	if (millis() - lastWifiConnectAttempt < 70000 && 
-		lastWifiConnectAttempt != 0) return;
+	if (millis() - lastWifiConnectAttempt < (
+		WIFI_TIMEOUT_MS + WIFI_RECONNECT_MS
+	) && lastWifiConnectAttempt != 0) return;
 	lastWifiConnectAttempt = millis();
 	Serial.print("Подключение к Wi-Fi: ");
 	WiFi.begin(ssid, password);
@@ -60,7 +65,7 @@ void connectToWifi() {
 			Serial.println(" Ошибка\nПароль не верный\n");
 			return;
 		}
-		if (millis() - lastWifiConnectAttempt > 10000) {
+		if (millis() - lastWifiConnectAttempt > WIFI_TIMEOUT_MS) {
 			Serial.println(" Таймаут\n");
 			return;
 		}
@@ -72,8 +77,9 @@ void connectToWifi() {
 
 u64 lastServerConnectAttempt = 0;
 void connectToServer() {
-	if (millis() - lastServerConnectAttempt < 35000 &&
-		lastServerConnectAttempt != 0) return;
+	if (millis() - lastServerConnectAttempt < (
+		SERVER_TIMEOUT_MS + SERVER_RECONNECT_MS
+	) && lastServerConnectAttempt != 0) return;
 	lastServerConnectAttempt = millis();
 	Serial.print("Подключение к серверу: ");
 	while (!client.connected()) {
@@ -81,7 +87,7 @@ void connectToServer() {
 			Serial.println(" Ошибка\nWiFi не подключен\n");
 			return;
 		}
-		if (millis() - lastServerConnectAttempt > 5000) {
+		if (millis() - lastServerConnectAttempt > SERVER_TIMEOUT_MS) {
 			Serial.println(" Таймаут\n");
 			return;
 		}
@@ -104,11 +110,11 @@ void sendSensorData(int sensor_id, float data) {
 	req += "\r\n";
 	req += body;
 
-  while (!client.connected())
-    client.connect(host, port);
+	while (!client.connected())
+		client.connect(host, port);
 	client.print(req);
 	// while (client.available()) client.read();
-  client.stop();
+	client.stop();
 
 	Serial.print("Отправлен ");
 	Serial.print(sensor_id);
@@ -116,10 +122,6 @@ void sendSensorData(int sensor_id, float data) {
 	Serial.println(data);
 }
 
-void generateMySSID() {
-	u32 r = rand() % 10000;
-	my_ssid = "ESP_" + String(r);
-}
 
 void enterConfigMode() {
 	Serial.println("\n=== РЕЖИМ КОНФИГУРАЦИИ (1 минута) ===");
@@ -231,7 +233,6 @@ void setup() {
 	Serial.begin(115200);
 	Serial.println();
 	pinMode(D0, INPUT);
-	generateMySSID();
 	WiFi.mode(WIFI_AP_STA);
 	WiFi.softAP(my_ssid, my_password);
 	Serial.print("IP точки доступа: ");
