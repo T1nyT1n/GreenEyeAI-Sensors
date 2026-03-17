@@ -10,7 +10,6 @@
 #define SERVER_TIMEOUT_MS 5000
 #define SERVER_RECONNECT_MS 30000
 
-
 String ssid     = "VNE-N41";
 String password = "34670000";
 String host     = "10.21.36.131";
@@ -18,10 +17,6 @@ u16 port        = 5000;
 
 WiFiClient client;
 WiFiServer configServer(7931);
-
-u64 lastPressTime = 0;
-bool lastButtonState = false;
-bool doubleClickDetected = false;
 
 const String my_ssid = "ESP_CONIG";
 const String my_password = "34670000";
@@ -53,55 +48,46 @@ float getRandom(float min, float max) {
 
 
 u64 lastWifiConnectAttempt = 0;
-void connectToWifi() {
-	if (millis() - lastWifiConnectAttempt < (
-		WIFI_TIMEOUT_MS + WIFI_RECONNECT_MS
-	) && lastWifiConnectAttempt != 0) return;
-	lastWifiConnectAttempt = millis();
-	Serial.print("Подключение к Wi-Fi: ");
-	WiFi.begin(ssid, password);
-	while (!WiFi.isConnected()) {
+bool connectToWifi() {
+	if (WiFi.isConnected()) return true;
+	if (lastWifiConnectAttempt == 0) {
+		WiFi.disconnect();
+		WiFi.begin(ssid, password);
+		lastWifiConnectAttempt = millis();
+	}
+
+	if (millis() - lastWifiConnectAttempt < WIFI_TIMEOUT_MS) {
 		auto status = WiFi.status();
 		if (status == WL_NO_SSID_AVAIL) {
-			Serial.println(" Ошибка\nДанный SSID не доступен\n");
-			return;
+			Serial.println("\nЗаданная сеть не найдена.\n");
+			lastWifiConnectAttempt = millis() - WIFI_TIMEOUT_MS - 100;
+		} else if (status == WL_WRONG_PASSWORD) {
+			Serial.println("\nЗаданный пароль не верный.\n");
+			lastWifiConnectAttempt = millis() - WIFI_TIMEOUT_MS - 100;
 		}
-		if (status == WL_WRONG_PASSWORD) {
-			Serial.println(" Ошибка\nПароль не верный\n");
-			return;
-		}
-		if (millis() - lastWifiConnectAttempt > WIFI_TIMEOUT_MS) {
-			Serial.println(" Таймаут\n");
-			return;
-		}
-		Serial.print(".");
-		delay(500);
 	}
-	Serial.println(" Готово\n");
+
+	if (millis() - lastWifiConnectAttempt > WIFI_TIMEOUT_MS
+		+ WIFI_RECONNECT_MS) lastWifiConnectAttempt = 0;
+	return false;
 }
 
-u64 lastServerConnectAttempt = 0;
-void connectToServer() {
-	if (millis() - lastServerConnectAttempt < (
-		SERVER_TIMEOUT_MS + SERVER_RECONNECT_MS
-	) && lastServerConnectAttempt != 0) return;
-	lastServerConnectAttempt = millis();
-	Serial.print("Подключение к серверу: ");
-	while (!client.connected()) {
-		if (!WiFi.isConnected()) {
-			Serial.println(" Ошибка\nWiFi не подключен\n");
-			return;
-		}
-		if (millis() - lastServerConnectAttempt > SERVER_TIMEOUT_MS) {
-			Serial.println(" Таймаут\n");
-			return;
-		}
-		client.connect(host, port);
-		Serial.print(".");
-		delay(500);
-	}
-	Serial.println(" Готово\n");
-}
+// u64 lastServerConnectAttempt = 0;
+// bool connectToServer() {
+// 	if (client.connected()) return true;
+// 	if (lastServerConnectAttempt == 0) {
+// 		client.connect(host, port);
+// 		lastServerConnectAttempt = millis();
+// 	} 
+
+// 	// if (millis() - lastServerConnectAttempt > SERVER_TIMEOUT_MS) {}
+// 	if (millis() - lastServerConnectAttempt > SERVER_TIMEOUT_MS 
+// 		+ SERVER_RECONNECT_MS) {
+// 		lastServerConnectAttempt = 0;
+// 	}
+
+// 	return false;
+// }
 
 void sendSensorData(int sensor_id, float data) {
 	String body = "{\"sensor_id\":\"" + String(sensor_id + START_SENSOR) +
@@ -208,60 +194,54 @@ void enterConfigMode() {
 	if (!configured) {
 		Serial.println("Таймаут конфигурации, продолжаем работу со старыми параметрами");
 	} else {
-		Serial.println("Переподключение к новой сети...");
-		WiFi.disconnect();
-		delay(1000);
-		connectToWifi();
-		if (WiFi.isConnected()) {
-			connectToServer();
-		}
+		lastWifiConnectAttempt = 0;
+		// lastServerConnectAttempt = 0;
 	}
 	Serial.println("=== ВЫХОД ИЗ РЕЖИМА КОНФИГУРАЦИИ ===\n");
 }
 
-void checkDoubleClick() {
+u64 lastPressTime = 0;
+bool lastButtonState = false;
+bool checkDoubleClick() {
+	bool doubleClickDetected = false;
 	bool currentButtonState = digitalRead(BUTTON_PIN);
 	if (currentButtonState && !lastButtonState) {
 		auto x = millis() - lastPressTime;
 		if (x > 100 && x < 500) {
-			doubleClickDetected = true;
 			lastPressTime = 0;
-		} else {
-			lastPressTime = millis();
+			doubleClickDetected = true;
 		}
+		lastPressTime = millis();
 	}
 	lastButtonState = currentButtonState;
+	return doubleClickDetected;
 }
 
 void setup() {
 	srand(micros());
 	Serial.begin(115200);
+	// Serial.setDebugOutput(true);
 	Serial.println();
 	pinMode(D0, INPUT);
 	WiFi.mode(WIFI_AP_STA);
 	WiFi.softAP(my_ssid, my_password);
-	Serial.print("IP точки доступа: ");
-	Serial.println(WiFi.softAPIP());
 	for (u32 i = 0; i < SENSORS; i++) {
 		s[i].value = getRandom(s[i].base_min, s[i].base_max);
 	}
 }
 
 void loop() {
-	checkDoubleClick();
-	if (doubleClickDetected) {
-		doubleClickDetected = false;
-		enterConfigMode();
-	}
-
-	if (!WiFi.isConnected()) {
-		connectToWifi(); return; }
-	// if (!client.connected()) {
-	// 	connectToServer(); return; }
+	if (checkDoubleClick()) enterConfigMode();
+	if (!connectToWifi()) return;
+	// if (!connectToServer()) return;
 
 	for (u32 i = 0; i < SENSORS; i++) {
 		if (millis() - s[i].last_time < s[i].delay) continue;
 		s[i].value += getRandom(s[i].shift_min, s[i].shift_max);
+		if (s[i].value < s[i].base_min)
+			s[i].value = s[i].base_min;
+		if (s[i].value > s[i].base_max)
+			s[i].value = s[i].base_max;
 		sendSensorData(i, s[i].value);
 		s[i].last_time = millis();
 	}
