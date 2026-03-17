@@ -93,8 +93,8 @@ void connectToServer() {
 }
 
 void sendSensorData(int sensor_id, float data) {
-	String body = "{\"sensor_id\":" + String(sensor_id + START_SENSOR) +
-								",\"data\":" + String(data) + "}";
+	String body = "{\"sensor_id\":\"" + String(sensor_id + START_SENSOR) +
+								"\",\"data\":" + String(data) + "}";
 	int contentLength = body.length();
 	String req = "POST /data HTTP/1.1\r\n";
 	req += "Host: " + host + "\r\n";
@@ -104,8 +104,11 @@ void sendSensorData(int sensor_id, float data) {
 	req += "\r\n";
 	req += body;
 
+  while (!client.connected())
+    client.connect(host, port);
 	client.print(req);
-	while (client.available()) client.read();
+	// while (client.available()) client.read();
+  client.stop();
 
 	Serial.print("Отправлен ");
 	Serial.print(sensor_id);
@@ -247,8 +250,8 @@ void loop() {
 
 	if (!WiFi.isConnected()) {
 		connectToWifi(); return; }
-	if (!client.connected()) {
-		connectToServer(); return; }
+	// if (!client.connected()) {
+	// 	connectToServer(); return; }
 
 	for (u32 i = 0; i < SENSORS; i++) {
 		if (millis() - s[i].last_time < s[i].delay) continue;
