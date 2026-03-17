@@ -96,21 +96,24 @@ void sendSensorData(int sensor_id, float data) {
 	String req = "POST /data HTTP/1.1\r\n";
 	req += "Host: " + host + "\r\n";
 	req += "Content-Type: application/json\r\n";
-	req += "Content-Length: " + String(contentLength) + "\r\n";
 	req += "Connection: keep-alive\r\n";
+	req += "Content-Length: " + String(contentLength) + "\r\n";
 	req += "\r\n";
 	req += body;
 
+	// u64 start = millis();
 	while (!client.connected())
 		client.connect(host, port);
+	// Serial.print("Подключение к серверу заняло: ");
+	// Serial.print(millis() - start);
+	// Serial.println(" мс.");
 	client.print(req);
 	// while (client.available()) client.read();
 	client.stop();
-
-	Serial.print("Отправлен ");
-	Serial.print(sensor_id);
-	Serial.print(" со значением: ");
-	Serial.println(data);
+	// Serial.print("Отправлен ");
+	// Serial.print(sensor_id);
+	// Serial.print(" со значением: ");
+	// Serial.println(data);
 }
 
 
