@@ -42,10 +42,15 @@ Sensor s[] = {
 };
 
 
-float getRandom(float min, float max) {
-	float x = rand() / (float) RAND_MAX;
-	return min + (max - min) * x;
+float getRandomPrecent() {
+	return rand() / (float) RAND_MAX;
 }
+
+
+float getRandom(float min, float max) {
+	return min + (max - min) * getRandomPrecent();
+}
+
 
 u64 lastWifiConnectAttempt = 0;
 void connectToWifi() {
